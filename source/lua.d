@@ -15,6 +15,14 @@ import luajit.lua;
 import mutils.type_info;
 
 string luaExample=`
+local ss=hey.this(555)
+ss:printA()
+local w=ss:getTest(32);
+w.d=123;
+w:printA();
+ss:printTest(w);
+`;
+string luaExample23=`
 local ss=hey.this()
 ss:printA()
  ss=hey.this(123232311)
@@ -24,12 +32,14 @@ ss:printA()
 ss.c=3.14
 ss:printA()
 `;
+
 string luaExample3=`
 local ss=hey.this(333333)
 ss:printA()
 ss.a=100
 ss:printA()
 `;
+
 string luaExample2=`
 local m = 100;
 print(m);
@@ -47,6 +57,8 @@ ss:www(1, "strA", "strB")
 ss:www(1)
 ss:printA()
 `;
+
+
 __gshared lua_State* gLuaState;
 
 
@@ -192,11 +204,11 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 		}
 	}
 
-
-	functions[$-3]=luaL_Reg("this", &createObj!(StructType));
+	
+	functions[$-3]=luaL_Reg("this", &l_createObj!(StructType));
 	functions[$-2]=luaL_Reg("__gc", &deleteObj!(StructType));
 
-
+	
 
 	
 	// Create metatable for this struct
@@ -253,8 +265,21 @@ string getMetatableName(T)(){
 	return "luaL_"~T.stringof;
 }
 
+int l_createObj(StructType)(lua_State* l){
+	return createObj!(StructType)(l, 1);	
+}
 
-int createObj(StructType)(lua_State* l){
+StructType** allocateObjInLua(StructType)(lua_State* l, StructType* value){
+	StructType** udata = cast(StructType **)lua_newuserdata(l, size_t.sizeof);
+	*udata = value;
+	
+	string metaTableName=getMetatableName!StructType;
+	lua_getfield(l, LUA_REGISTRYINDEX, metaTableName.ptr);
+	lua_setmetatable(l, -2);
+	return udata;
+}
+
+int createObj(StructType)(lua_State* l, int argsStart ){
 	int luaParmsNum=lua_gettop(l);
 	//StructType* data=Mallocator.instance.make!StructType();   
 	StructType* data= cast(StructType*)(Mallocator.instance.allocate(StructType.sizeof).ptr);
@@ -265,12 +290,15 @@ int createObj(StructType)(lua_State* l){
 		//*data=StructType.init;
 		emplace(data);
 	}
-	StructType** udata = cast(StructType **)lua_newuserdata(l, size_t.sizeof);
+	/*StructType** udata = cast(StructType **)lua_newuserdata(l, size_t.sizeof);
 	*udata = data;
 
 	string metaTableName=getMetatableName!StructType;
 	lua_getfield(l, LUA_REGISTRYINDEX, metaTableName.ptr);
+	stackDump(l);
 	lua_setmetatable(l, -2);
+	stackDump(l);*/
+	allocateObjInLua!(StructType)(l, data);
 	return 1;	
 }
 
@@ -423,13 +451,19 @@ void pushReturnValue(T)(lua_State* l, ref T val){
 	static if( isIntegral!T || isFloatingPoint!T ){
 		lua_pushinteger(l, val);
 	}else{
-		//static assert(1, "Return type not supported");
-		luaWarning("Return type not supported");
+		//luaWarning("Return type not supported");
+
+		//stackDump(l);
+		T* data= cast(T*)(Mallocator.instance.allocate(T.sizeof).ptr);
+		emplace(data, val);
+		T** udata=allocateObjInLua!(T)(l, null);
+		*udata=data;
+
 	}
 }
 
 void luaWarning(string str){
-	writeln("Lua binding warning:",str);
+	writeln("Lua binding warning: ",str);
 }
 
 auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart){
@@ -489,6 +523,14 @@ struct Test{
 
 	void www(int a, string b, string str="somstr"){
 		writeln("www3: ", a, ", ", b, ", ", str);
+	}
+
+	Test getTest(int aaa){
+		return Test(aaa);
+	}
+
+	void printTest(Test test){
+		test.printA();
 	}
 
 	~this(){
