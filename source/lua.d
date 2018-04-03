@@ -21,6 +21,15 @@ local w=ss:getTest(32);
 w.d=123;
 w:printA();
 ss:printTest(w);
+
+local bb=w:makeTestBBB();
+w:use(bb);
+local kk=bb:makePrintFromTest(ss);
+kk:print();
+
+local cc=TestCCC.this();
+print(cc.ccc);
+w:use(cc);
 `;
 string luaExample23=`
 local ss=hey.this()
@@ -142,8 +151,10 @@ struct MemberSetGet{
 void initialize(){
 	gLuaState = luaL_newstate();
 	luaL_openlibs(gLuaState);
-	
+
 	bindStruct!(Test, "hey")(gLuaState);
+	bindStruct!(TestBBB, "TestBBB")(gLuaState);
+	bindStruct!(TestCCC, "TestCCC")(gLuaState);
 
 	luaL_loadstring(gLuaState, luaExample.ptr);
 	lua_pcall(gLuaState, 0, LUA_MULTRET, 0);	
@@ -212,7 +223,7 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 
 	
 	// Create metatable for this struct
-	string metaTableName=getMetatableName!Test;
+	string metaTableName=getMetatableName!StructType;
 	luaL_newmetatable(l, metaTableName.ptr);
 	int metatable = lua_gettop(l);	
 
@@ -265,40 +276,42 @@ string getMetatableName(T)(){
 	return "luaL_"~T.stringof;
 }
 
+string getMetatableNameFromTypeName(string typeName){
+	return "luaL_"~typeName;
+}
+
 int l_createObj(StructType)(lua_State* l){
 	return createObj!(StructType)(l, 1);	
 }
 
-StructType** allocateObjInLua(StructType)(lua_State* l, StructType* value){
+StructType* allocateObjInLua(StructType)(lua_State* l){
+	StructType* data= cast(StructType*)(Mallocator.instance.allocate(StructType.sizeof).ptr);
 	StructType** udata = cast(StructType **)lua_newuserdata(l, size_t.sizeof);
-	*udata = value;
-	
+	*udata = data;
 	string metaTableName=getMetatableName!StructType;
 	lua_getfield(l, LUA_REGISTRYINDEX, metaTableName.ptr);
 	lua_setmetatable(l, -2);
-	return udata;
+
+	return data;
 }
 
-int createObj(StructType)(lua_State* l, int argsStart ){
-	int luaParmsNum=lua_gettop(l);
-	//StructType* data=Mallocator.instance.make!StructType();   
-	StructType* data= cast(StructType*)(Mallocator.instance.allocate(StructType.sizeof).ptr);
+int createObj(StructType)(lua_State* l, int argsStart){
+	int argsNum=lua_gettop(l)-argsStart+1;
 
-	if(luaParmsNum){
-		callProcedure!(StructType, "__ctor")(data, l, 1);
+	StructType* data=allocateObjInLua!(StructType)(l);
+	if(argsNum){
+		static if(hasMember!(StructType, "__ctor")){
+			callProcedure!(StructType, "__ctor")(data, l, 1, argsNum);
+		}else{
+			stackDump(l);
+			writeln(argsNum);
+			assert(0, "Default constructor, with parameters not implemented");
+		}
+
 	}else{
 		//*data=StructType.init;
 		emplace(data);
 	}
-	/*StructType** udata = cast(StructType **)lua_newuserdata(l, size_t.sizeof);
-	*udata = data;
-
-	string metaTableName=getMetatableName!StructType;
-	lua_getfield(l, LUA_REGISTRYINDEX, metaTableName.ptr);
-	stackDump(l);
-	lua_setmetatable(l, -2);
-	stackDump(l);*/
-	allocateObjInLua!(StructType)(l, data);
 	return 1;	
 }
 
@@ -348,17 +361,18 @@ int l_getValue(StructType, string valueName)(lua_State* l, void* objPtr){
 }
 
 int l_callProcedure(StructType, string procedureName)(lua_State* l){
+	int argsNum=lua_gettop(l)-1;
 	enum metaTableName=getMetatableName!StructType;
 	StructType* foo = *cast(StructType **)luaL_checkudata(l, 1, metaTableName.ptr);
-	return callProcedure!(StructType, procedureName)(foo, l, 2);
+	return callProcedure!(StructType, procedureName)(foo, l, 2, argsNum);
 }
 
 
 
-int callProcedure(StructType, string procedureName)(StructType* var, lua_State* l, int argsStart){
+int callProcedure(StructType, string procedureName)(StructType* var, lua_State* l, int argsStart, int argsNum){
 	//StructType* var = *cast(StructType **)luaL_checkudata(l, 1, metaTableName.ptr);
 	alias overloads= typeof(__traits(getOverloads, *var, procedureName));
-	int overloadNummm=chooseFunctionOverload!(getProcedureData!(StructType, procedureName))(l, argsStart);
+	int overloadNummm=chooseFunctionOverload!(getProcedureData!(StructType, procedureName))(l, argsStart, argsNum);
 	if(overloadNummm==-1){
 		return 0;
 	}
@@ -381,14 +395,14 @@ sw:switch(overloadNummm){
 			returnValuesNum=hasReturn;
 
 			static if(hasParms){
-				auto parms=getParmsTuple!(FUN, ParmsDefault)(l, argsStart);
+				auto parms=getParmsTuple!(FUN, ParmsDefault)(l, argsStart, argsNum);
 			}else{
 				auto parms=tuple!();
 			}
 
 			static if(hasReturn){
 				auto ret=__traits(getOverloads, *var, procedureName)[overloadNum](parms.expand);
-				if(procedureName=="__ctor"){
+				static if(procedureName=="__ctor"){
 					emplace(var, ret);// For some reason __ctors returns value and does not modify 'var' object
 				}else{
 					pushReturnValue(l, ret);
@@ -408,8 +422,8 @@ sw:switch(overloadNummm){
 }
 
 
-int chooseFunctionOverload(ProcedureData procedureData)(lua_State* l, int argsStart){
-	int luaParmsNum=lua_gettop(l)-argsStart+1;
+int chooseFunctionOverload(ProcedureData procedureData)(lua_State* l, int argsStart, int argsNum){
+	//int argsNum=lua_gettop(l)-argsStart+1;
 	
 	bool noChoice= (procedureData.overloads.length==1);
 	if(noChoice){
@@ -418,17 +432,22 @@ int chooseFunctionOverload(ProcedureData procedureData)(lua_State* l, int argsSt
 	
 	int callableIndex=-1;
 OVERLOADS:foreach(int i, OverloadData overload; procedureData.overloads){
-		bool callable=overload.callableUsingArgsNum(luaParmsNum);
+		bool callable=overload.callableUsingArgsNum(argsNum);
 		if(!callable){
 			continue;
 		}
 		foreach(int k, ParameterData parm; overload.parameters){
-			if(k>=luaParmsNum){
+			if(k>=argsNum){
 				continue;
 			}
-			if(lua_type(l, k+argsStart)!=parm.luaType){
-				continue OVERLOADS;
-				
+			if(lua_type(l, argsStart+k)!=parm.luaType){
+				continue OVERLOADS;				
+			}else if(parm.luaType==LuaType.userdata){
+				string metaTableName=getMetatableNameFromTypeName(parm.typeData.name)~"\0";
+				bool ok=isUserType(l, argsStart+k, metaTableName.ptr);
+				if(ok==false){
+					continue OVERLOADS;			
+				}
 			}
 		}
 		
@@ -445,6 +464,22 @@ OVERLOADS:foreach(int i, OverloadData overload; procedureData.overloads){
 	return callableIndex;
 }
 
+bool isUserType(lua_State* l, int ud, const char* metaTableName){
+	void *p = lua_touserdata(l, ud);
+	if (p == null) {  /* value is not a userdata? */
+		return false;
+	}
+	if (lua_getmetatable(l, ud)) {  /* does it have a metatable? */
+		lua_getfield(l, LUA_REGISTRYINDEX, metaTableName);  /* get correct metatable */
+		if (lua_rawequal(l, -1, -2)) {  /* does it have the correct mt? */
+			lua_pop(l, 2);  /* remove both metatables */
+			return true;
+		}
+	}
+	return false;
+
+}
+
 
 
 void pushReturnValue(T)(lua_State* l, ref T val){
@@ -454,11 +489,10 @@ void pushReturnValue(T)(lua_State* l, ref T val){
 		//luaWarning("Return type not supported");
 
 		//stackDump(l);
-		T* data= cast(T*)(Mallocator.instance.allocate(T.sizeof).ptr);
+		//T* data= cast(T*)(Mallocator.instance.allocate(T.sizeof).ptr);
+		T* data=allocateObjInLua!(T)(l);
 		emplace(data, val);
-		T** udata=allocateObjInLua!(T)(l, null);
-		*udata=data;
-
+		//*udata=data;
 	}
 }
 
@@ -466,24 +500,28 @@ void luaWarning(string str){
 	writeln("Lua binding warning: ",str);
 }
 
-auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart){
+auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart, int argsNum){
 	alias Parms=Parameters!FUN;
 	static assert(Parms.length<=16);// Lua stack has minimum 16 slots
 	Tuple!(Parms) parms;
-	int luaParmsNum=lua_gettop(l)-argsStart+1;
+	//int argsNum=lua_gettop(l)-argsStart+1;
 	foreach(int i, PARM; Parms){
-		if(i>=luaParmsNum){
+		if(i>=argsNum){
 			static if( !is(ParmsDefault[i]==void) ){
 				parms[i]=ParmsDefault[i];
 			}
 			continue;
 		}
 		static if( isIntegral!PARM || isFloatingPoint!PARM ){
-			parms[i]=cast(PARM)luaL_checknumber(l, i+argsStart);
+			parms[i]=cast(PARM)luaL_checknumber(l, argsStart+i);
 		}else static if( is(PARM==string) ){
 			size_t strLen=0;
-			const char* luaStr=luaL_checklstring(l, i+argsStart, &strLen);
+			const char* luaStr=luaL_checklstring(l, argsStart+i, &strLen);
 			parms[i]=(luaStr[0..strLen]).idup;
+		}else static if( is(PARM==struct) ){
+			enum metaTableName=getMetatableName!PARM;
+			PARM* m = *cast(PARM **)luaL_checkudata(l, argsStart+i, metaTableName.ptr);
+			parms[i]=*m;
 		}else{
 			//pragma(msg, PARM);
 			//static assert(0, "Type not supported");
@@ -533,6 +571,18 @@ struct Test{
 		test.printA();
 	}
 
+	TestBBB makeTestBBB(){
+		return TestBBB();
+	}
+
+	void use(TestBBB test){
+		writeln("Got: ", test);
+	}
+
+	void use(TestCCC test){
+		writeln("Got: ", test);
+	}
+
 	~this(){
 		//writeln(a);
 		//writeln("aaaaaaaaaaaaaaaaa");
@@ -540,6 +590,23 @@ struct Test{
 }
 
 
+
+struct TestBBB{
+	int numA;
+	float bb=123;
+
+	TestBBB makePrintFromTest(Test test){
+		writeln(this);
+		return TestBBB(test.a, bb);
+	}
+	void print(){
+		writeln(this);
+	}
+}
+
+struct TestCCC{
+	int ccc;
+}
 
 int add(int a, int b){
 	return a+b;
