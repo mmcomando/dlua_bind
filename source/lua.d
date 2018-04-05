@@ -30,6 +30,13 @@ kk:print();
 local cc=TestCCC.this();
 print(cc.ccc);
 w:use(cc);
+
+local tt=bb.test;
+print(tt.a);
+
+bb.test=hey.this(3030);
+print(bb.test.a);
+bb.test:printA();
 `;
 string luaExample23=`
 local ss=hey.this()
@@ -339,6 +346,11 @@ int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 	static if( isNumeric!Type){
 		__traits(getMember, *foo, valueName) = cast(Type)luaL_checknumber(l, -1);
 	}else{
+		stackDump(l);
+
+		enum string metaTableName=getMetatableName!Type;
+		Type* var = *cast(Type **)luaL_checkudata(l, 1, metaTableName);
+		__traits(getMember, *foo, valueName) = *var;
 		luaWarning( "Set value not supported");
 	}
 
@@ -346,17 +358,11 @@ int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 }
 
 int l_getValue(StructType, string valueName)(lua_State* l, void* objPtr){
-	StructType* foo = cast(StructType *)objPtr;
-	
-	alias Type=typeof( __traits(getMember, StructType, valueName) );
-	
-	static if( isNumeric!Type){
-		lua_pushnumber(l, __traits(getMember, *foo, valueName));
-		//= cast(Type)luaL_checknumber(l, -1);
-	}else{
-		luaWarning( "Get value not supported");
-	}
-	
+	StructType* foo = cast(StructType *)objPtr;	
+
+	auto val=__traits(getMember, *foo, valueName);
+	pushReturnValue(l, val);
+
 	return 1;
 }
 
@@ -484,7 +490,7 @@ bool isUserType(lua_State* l, int ud, const char* metaTableName){
 
 void pushReturnValue(T)(lua_State* l, ref T val){
 	static if( isIntegral!T || isFloatingPoint!T ){
-		lua_pushinteger(l, val);
+		lua_pushnumber(l, val);
 	}else{
 		//luaWarning("Return type not supported");
 
@@ -594,6 +600,7 @@ struct Test{
 struct TestBBB{
 	int numA;
 	float bb=123;
+	Test test;
 
 	TestBBB makePrintFromTest(Test test){
 		writeln(this);
