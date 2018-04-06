@@ -77,84 +77,6 @@ ss:printA()
 
 __gshared lua_State* gLuaState;
 
-
-static void stackDump (lua_State *l) {
-	printf("\nStack dump start:\n ");
-	int i;
-	int top = lua_gettop(l);
-	for (i = 1; i <= top; i++) {  /* repeat for each level */
-		int t = lua_type(l, i);
-		switch (t) {
-			
-			case LUA_TSTRING:  /* strings */
-				printf("`%s'", lua_tostring(l, i));
-				break;
-				
-			case LUA_TBOOLEAN:  /* booleans */
-				printf(lua_toboolean(l, i) ? "true" : "false");
-				break;
-				
-			case LUA_TNUMBER:  /* numbers */
-				printf("%g", lua_tonumber(l, i));
-				break;
-				
-			default:  /* other values */
-				printf("%s", lua_typename(l, t));
-				break;
-				
-		}
-		printf("\n  ");  /* put a separator */
-	}
-	printf("\nend\n\n");  /* end the listing */
-}
-
-
-int index_handler(StructType)(lua_State* l){
-	// stack has userdata, index 
-	lua_pushvalue(l, 2);                     // dup index 
-	lua_rawget(l, lua_upvalueindex(1));      // lookup member by name 
-	if (!lua_islightuserdata(l, -1)) {
-		lua_pop(l, 1);                         // drop value 
-		lua_pushvalue(l, 2);                   // dup index 
-		lua_gettable(l, lua_upvalueindex(2));  // else try methods 
-		if (lua_isnil(l, -1))                  // invalid member 
-			luaL_error(l, "cannot get member '%s'", lua_tostring(l, 2));
-		return 1;
-	}
-	//writeln("ppppppppppp");
-
-	//lua_pushinteger(L, 3);
-
-	MemberSetGet* m = cast(MemberSetGet*)lua_touserdata(l, -1);  /* member info */
-	lua_pop(l, 1);     
-	luaL_checktype(l, 1, LUA_TUSERDATA);
-	enum metaTableName=getMetatableName!StructType;
-	StructType* var = *cast(StructType **)luaL_checkudata(l, 1, metaTableName);
-	return m.func(l, var);
-}
-
-int newindex_handler(StructType)(lua_State *l){
-	lua_pushvalue(l, 2);                     // dup index 
-	lua_rawget(l, lua_upvalueindex(1));      // lookup member by name 
-	if (!lua_islightuserdata(l, -1))         // invalid member 
-		luaL_error(l, "cannot set member '%s'", lua_tostring(l, 2));
-
-	
-	MemberSetGet* m = cast(MemberSetGet*)lua_touserdata(l, -1);  // member info 
-	lua_pop(l, 1);                               // drop lightuserdata 
-	luaL_checktype(l, 1, LUA_TUSERDATA);         // dup index 
-
-	enum metaTableName=getMetatableName!StructType;
-	StructType* var = *cast(StructType **)luaL_checkudata(l, 1, metaTableName);
-	m.func(l, var);
-	return 0;
-}
-struct MemberSetGet{
-	string name;
-	int function(lua_State* l, void* objPtr) func; 
-}
-
-
 void initialize(){
 	gLuaState = luaL_newstate();
 	luaL_openlibs(gLuaState);
@@ -197,6 +119,11 @@ template AliasSeqIter(int elementsNum){
 	alias AliasSeqIter=aliasSeqOf!( iota(0, elementsNum) );
 }
 
+struct MemberSetGet{
+	string name;
+	int function(lua_State* l, void* objPtr) func; 
+}
+
 void bindStruct(StructType, string luaStructName)(lua_State* l){
 	enum string[] functionMembers=getFunctionMembers!StructType;
 	enum string[] fieldMembers=getFieldMembers!StructType;
@@ -224,9 +151,7 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 
 	
 	functions[$-3]=luaL_Reg("this", &l_createObj!(StructType));
-	functions[$-2]=luaL_Reg("__gc", &deleteObj!(StructType));
-
-	
+	functions[$-2]=luaL_Reg("__gc", &l_deleteObj!(StructType));	
 
 	
 	// Create metatable for this struct
@@ -248,7 +173,7 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 		lua_settable(l, -3);
 	}
 	lua_pushvalue(l, methods);    // upvalue index 2
-	lua_pushcclosure(l, &index_handler!StructType, 2);
+	lua_pushcclosure(l, &l_indexHandler!StructType, 2);
 	lua_rawset(l, metatable);   //  metatable.__index = index_handler 
 	
 	
@@ -263,7 +188,7 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 		lua_pushlightuserdata(l, cast(void*)&reg);
 		lua_settable(l, -3);
 	}	
-	lua_pushcclosure(l, &newindex_handler!StructType, 1);
+	lua_pushcclosure(l, &l_newIndexHandler!StructType, 1);
 	lua_rawset(l, metatable);     // metatable.__newindex = newindex_handler 
 	
 	lua_setglobal(l, luaStructName);
@@ -274,9 +199,52 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 
 
 
-void bindFunction(alias FUN, string name)(){
-	lua_pushcclosure(gLuaState, &createLuaBindFunction!(FUN), 0);
-	lua_setglobal(gLuaState, name);
+
+
+
+
+
+
+
+void assertInLua(bool ok, string err){
+	if(!ok){
+		writeln(err);
+	}
+}
+
+void luaWarning(string str){
+	writeln("Lua binding warning: ",str);
+}
+
+
+void stackDump (lua_State *l) {
+	printf("\nStack dump start:\n ");
+	int i;
+	int top = lua_gettop(l);
+	for (i = 1; i <= top; i++) {  /* repeat for each level */
+		int t = lua_type(l, i);
+		switch (t) {
+			
+			case LUA_TSTRING:  /* strings */
+				printf("`%s'", lua_tostring(l, i));
+				break;
+				
+			case LUA_TBOOLEAN:  /* booleans */
+				printf(lua_toboolean(l, i) ? "true" : "false");
+				break;
+				
+			case LUA_TNUMBER:  /* numbers */
+				printf("%g", lua_tonumber(l, i));
+				break;
+				
+			default:  /* other values */
+				printf("%s", lua_typename(l, t));
+				break;
+				
+		}
+		printf("\n  ");  /* put a separator */
+	}
+	printf("\nend\n\n");  /* end the listing */
 }
 
 string getMetatableName(T)(){
@@ -287,9 +255,10 @@ string getMetatableNameFromTypeName(string typeName){
 	return "luaL_"~typeName;
 }
 
-int l_createObj(StructType)(lua_State* l){
-	return createObj!(StructType)(l, 1);	
-}
+
+
+
+
 
 StructType* allocateObjInLua(StructType)(lua_State* l){
 	StructType* data= cast(StructType*)(Mallocator.instance.allocate(StructType.sizeof).ptr);
@@ -298,13 +267,13 @@ StructType* allocateObjInLua(StructType)(lua_State* l){
 	string metaTableName=getMetatableName!StructType;
 	lua_getfield(l, LUA_REGISTRYINDEX, metaTableName.ptr);
 	lua_setmetatable(l, -2);
-
+	
 	return data;
 }
 
 int createObj(StructType)(lua_State* l, int argsStart){
 	int argsNum=lua_gettop(l)-argsStart+1;
-
+	
 	StructType* data=allocateObjInLua!(StructType)(l);
 	if(argsNum){
 		static if(hasMember!(StructType, "__ctor")){
@@ -314,7 +283,7 @@ int createObj(StructType)(lua_State* l, int argsStart){
 			writeln(argsNum);
 			assert(0, "Default constructor, with parameters not implemented");
 		}
-
+		
 	}else{
 		//*data=StructType.init;
 		emplace(data);
@@ -322,21 +291,54 @@ int createObj(StructType)(lua_State* l, int argsStart){
 	return 1;	
 }
 
-int deleteObj(StructType)(lua_State* l){
+int l_indexHandler(StructType)(lua_State* l){
+	// stack has userdata, index 
+	lua_pushvalue(l, 2);                     // dup index 
+	lua_rawget(l, lua_upvalueindex(1));      // lookup member by name 
+	if (!lua_islightuserdata(l, -1)) {
+		lua_pop(l, 1);                         // drop value 
+		lua_pushvalue(l, 2);                   // dup index 
+		lua_gettable(l, lua_upvalueindex(2));  // else try methods 
+		if (lua_isnil(l, -1))                  // invalid member 
+			luaL_error(l, "cannot get member '%s'", lua_tostring(l, 2));
+		return 1;
+	}
+	
+	MemberSetGet* m = cast(MemberSetGet*)lua_touserdata(l, -1);  /* member info */
+	lua_pop(l, 1);     
+	luaL_checktype(l, 1, LUA_TUSERDATA);
+	enum metaTableName=getMetatableName!StructType;
+	StructType* var = *cast(StructType **)luaL_checkudata(l, 1, metaTableName);
+	return m.func(l, var);
+}
+
+int l_newIndexHandler(StructType)(lua_State *l){
+	lua_pushvalue(l, 2);                     // dup index 
+	lua_rawget(l, lua_upvalueindex(1));      // lookup member by name 
+	if (!lua_islightuserdata(l, -1))         // invalid member 
+		luaL_error(l, "cannot set member '%s'", lua_tostring(l, 2));
+	
+	
+	MemberSetGet* m = cast(MemberSetGet*)lua_touserdata(l, -1);  // member info 
+	lua_pop(l, 1);                               // drop lightuserdata 
+	luaL_checktype(l, 1, LUA_TUSERDATA);         // dup index 
+	
+	enum metaTableName=getMetatableName!StructType;
+	StructType* var = *cast(StructType **)luaL_checkudata(l, 1, metaTableName);
+	m.func(l, var);
+	return 0;
+}
+
+int l_createObj(StructType)(lua_State* l){
+	return createObj!(StructType)(l, 1);	
+}
+
+int l_deleteObj(StructType)(lua_State* l){
 	enum metaTableName=getMetatableName!StructType;
 	StructType* foo = *cast(StructType **)luaL_checkudata(l, 1, metaTableName);
 	Mallocator.instance.dispose(foo);
 	return 0;	
 }
-
-
-
-void assertInLua(bool ok, string err){
-	if(!ok){
-		writeln(err);
-	}
-}
-
 
 int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 	StructType* foo = cast(StructType *)objPtr;
@@ -346,12 +348,9 @@ int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 	static if( isNumeric!Type){
 		__traits(getMember, *foo, valueName) = cast(Type)luaL_checknumber(l, -1);
 	}else{
-		stackDump(l);
-
 		enum string metaTableName=getMetatableName!Type;
-		Type* var = *cast(Type **)luaL_checkudata(l, 1, metaTableName);
+		Type* var = *cast(Type **)luaL_checkudata(l, -1, metaTableName);
 		__traits(getMember, *foo, valueName) = *var;
-		luaWarning( "Set value not supported");
 	}
 
 	return 0;
@@ -376,13 +375,11 @@ int l_callProcedure(StructType, string procedureName)(lua_State* l){
 
 
 int callProcedure(StructType, string procedureName)(StructType* var, lua_State* l, int argsStart, int argsNum){
-	//StructType* var = *cast(StructType **)luaL_checkudata(l, 1, metaTableName.ptr);
 	alias overloads= typeof(__traits(getOverloads, *var, procedureName));
 	int overloadNummm=chooseFunctionOverload!(getProcedureData!(StructType, procedureName))(l, argsStart, argsNum);
 	if(overloadNummm==-1){
 		return 0;
 	}
-
 	
 	int returnValuesNum=0;
 sw:switch(overloadNummm){
@@ -428,9 +425,7 @@ sw:switch(overloadNummm){
 }
 
 
-int chooseFunctionOverload(ProcedureData procedureData)(lua_State* l, int argsStart, int argsNum){
-	//int argsNum=lua_gettop(l)-argsStart+1;
-	
+int chooseFunctionOverload(ProcedureData procedureData)(lua_State* l, int argsStart, int argsNum){	
 	bool noChoice= (procedureData.overloads.length==1);
 	if(noChoice){
 		return 0;
@@ -483,34 +478,24 @@ bool isUserType(lua_State* l, int ud, const char* metaTableName){
 		}
 	}
 	return false;
-
 }
-
-
 
 void pushReturnValue(T)(lua_State* l, ref T val){
 	static if( isIntegral!T || isFloatingPoint!T ){
 		lua_pushnumber(l, val);
 	}else{
-		//luaWarning("Return type not supported");
-
-		//stackDump(l);
-		//T* data= cast(T*)(Mallocator.instance.allocate(T.sizeof).ptr);
 		T* data=allocateObjInLua!(T)(l);
 		emplace(data, val);
-		//*udata=data;
 	}
 }
 
-void luaWarning(string str){
-	writeln("Lua binding warning: ",str);
-}
+
 
 auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart, int argsNum){
 	alias Parms=Parameters!FUN;
 	static assert(Parms.length<=16);// Lua stack has minimum 16 slots
 	Tuple!(Parms) parms;
-	//int argsNum=lua_gettop(l)-argsStart+1;
+
 	foreach(int i, PARM; Parms){
 		if(i>=argsNum){
 			static if( !is(ParmsDefault[i]==void) ){
@@ -536,6 +521,14 @@ auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart, int argsNu
 	}
 	return parms;
 }
+
+
+
+
+
+
+
+
 
 
 
@@ -617,6 +610,20 @@ struct TestCCC{
 
 int add(int a, int b){
 	return a+b;
+}
+
+
+
+
+
+
+
+
+
+
+void bindFunction(alias FUN, string name)(){
+	lua_pushcclosure(gLuaState, &createLuaBindFunction!(FUN), 0);
+	lua_setglobal(gLuaState, name);
 }
 
 int createLuaBindFunction(alias FUN)(lua_State* l){
