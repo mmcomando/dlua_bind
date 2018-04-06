@@ -37,6 +37,9 @@ print(tt.a);
 bb.test=hey.this(3030);
 print(bb.test.a);
 bb.test:printA();
+
+local ccc=TestCCC.this(22);
+print(ccc.ccc);
 `;
 string luaExample23=`
 local ss=hey.this()
@@ -279,9 +282,13 @@ int createObj(StructType)(lua_State* l, int argsStart){
 		static if(hasMember!(StructType, "__ctor")){
 			callProcedure!(StructType, "__ctor")(data, l, 1, argsNum);
 		}else{
-			stackDump(l);
-			writeln(argsNum);
-			assert(0, "Default constructor, with parameters not implemented");
+			emplace(data);
+			foreach(i, ref field; (*data).tupleof){
+				if(i>=argsNum){
+					break;
+				}
+				setValueFromLuaStack(l, i+1, field);
+			}
 		}
 		
 	}else{
@@ -493,7 +500,7 @@ void pushReturnValue(T)(lua_State* l, ref T val){
 
 auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart, int argsNum){
 	alias Parms=Parameters!FUN;
-	static assert(Parms.length<=16);// Lua stack has minimum 16 slots
+	static assert(Parms.length<=LUA_MINSTACK);// Minimim lua stack slots
 	Tuple!(Parms) parms;
 
 	foreach(int i, PARM; Parms){
@@ -503,23 +510,26 @@ auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart, int argsNu
 			}
 			continue;
 		}
-		static if( isIntegral!PARM || isFloatingPoint!PARM ){
-			parms[i]=cast(PARM)luaL_checknumber(l, argsStart+i);
-		}else static if( is(PARM==string) ){
-			size_t strLen=0;
-			const char* luaStr=luaL_checklstring(l, argsStart+i, &strLen);
-			parms[i]=(luaStr[0..strLen]).idup;
-		}else static if( is(PARM==struct) ){
-			enum metaTableName=getMetatableName!PARM;
-			PARM* m = *cast(PARM **)luaL_checkudata(l, argsStart+i, metaTableName.ptr);
-			parms[i]=*m;
-		}else{
-			//pragma(msg, PARM);
-			//static assert(0, "Type not supported");
-			luaWarning("Type not supported");
-		}
+		setValueFromLuaStack(l, argsStart+i ,parms[i]);
 	}
 	return parms;
+}
+
+void setValueFromLuaStack(PARM)(lua_State* l, int valueStackNum, ref PARM value){
+	static if( isIntegral!PARM || isFloatingPoint!PARM ){
+		value=cast(PARM)luaL_checknumber(l, valueStackNum);
+	}else static if( is(PARM==string) ){
+		size_t strLen=0;
+		const char* luaStr=luaL_checklstring(l, valueStackNum, &strLen);
+		value=(luaStr[0..strLen]).idup;
+	}else static if( is(PARM==struct) ){
+		enum metaTableName=getMetatableName!PARM;
+		PARM* m = *cast(PARM **)luaL_checkudata(l, valueStackNum, metaTableName.ptr);
+		value=*m;
+	}else{
+		//pragma(msg, PARM);
+		luaWarning("Type not supported");
+	}
 }
 
 
