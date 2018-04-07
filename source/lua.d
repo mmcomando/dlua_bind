@@ -38,8 +38,15 @@ bb.test=hey.this(3030);
 print(bb.test.a);
 bb.test:printA();
 
+print("ww");
+bb.test.a=123123;
+bb.test:printA();
+print(bb.test.a);
+
 local ccc=TestCCC.this(22);
 print(ccc.ccc);
+local testPtr=bb:getTestPointer();
+print(testPtr.a);
 `;
 string luaExample23=`
 local ss=hey.this()
@@ -93,29 +100,6 @@ void initialize(){
 }
 
 
-string[] getFunctionMembers(StructType)(){
-	string[] members;
-	foreach(member; __traits(allMembers, StructType)){
-		alias Type=  typeof(__traits(getMember, StructType, member));
-		static if( isFunction!( Type ) ){
-			members~=member;
-		}
-	}
-	return members;
-}
-
-string[] getFieldMembers(StructType)(){
-	string[] members;
-	foreach(member; __traits(allMembers, StructType)){
-		alias Type=  typeof(__traits(getMember, StructType, member));
-		static if( !isFunction!( Type ) ){
-			members~=member;
-		}
-	}
-	return members;
-}
-
-
 template AliasSeqIter(int elementsNum){
 	import std.range: iota;
 	import std.meta;
@@ -127,29 +111,61 @@ struct MemberSetGet{
 	int function(lua_State* l, void* objPtr) func; 
 }
 
+
+string[] getFunctionMembers(StructType)(){
+	string[] members;
+	foreach(member; __traits(allMembers, StructType)){
+		alias Type=  typeof(__traits(getMember, StructType, member));
+		static if( isFunction!( Type ) ){
+			members~=member;
+		}
+	}
+	return members;
+}
+string[] getSetFieldMembers(StructType)(){
+	string[] members;
+	foreach(member; __traits(allMembers, StructType)){
+		alias Type=  typeof(__traits(getMember, StructType, member));
+		static if( !isFunction!( Type ) && !is(Type==const) && !is(Type==immutable) ){
+			members~=member;
+		}
+	}
+	return members;
+}
+
+string[] getGetFieldMembers(StructType)(){
+	string[] members;
+	foreach(member; __traits(allMembers, StructType)){
+		alias Type=  typeof(__traits(getMember, StructType, member));
+		static if( !isFunction!( Type ) ){
+			members~=member;
+		}
+	}
+	return members;
+}
+
 void bindStruct(StructType, string luaStructName)(lua_State* l){
 	enum string[] functionMembers=getFunctionMembers!StructType;
-	enum string[] fieldMembers=getFieldMembers!StructType;
+	enum string[] setFieldMembers=getSetFieldMembers!StructType;
+	enum string[] getFieldMembers=getGetFieldMembers!StructType;
 
 	luaL_Reg[functionMembers.length+2+1] functions;// Last one is marking the end of array for lua. Two additional fields for constructor and destructor
-	static MemberSetGet[fieldMembers.length] setters;
-	static MemberSetGet[fieldMembers.length] getters;
+	static MemberSetGet[setFieldMembers.length] setters;
+	static MemberSetGet[getFieldMembers.length] getters;
 
 	foreach(i; AliasSeqIter!(functionMembers.length)){
 		enum member=functionMembers[i];
-		alias Type=  typeof(__traits(getMember, StructType, member));
-		static if( isFunction!( Type ) ){
-			functions[i]=luaL_Reg( (member~"\0").ptr, &l_callProcedure!(StructType, member));
-		}
+		functions[i]=luaL_Reg( (member~"\0").ptr, &l_callProcedure!(StructType, member));
 	}
 
-	foreach(i; AliasSeqIter!(fieldMembers.length)){
-		enum member=fieldMembers[i];
-		alias Type=  typeof(__traits(getMember, StructType, member));
-		static if( !isFunction!( Type ) ){
-			setters[i]=MemberSetGet( member, &l_setValue!(StructType, member) );
-			getters[i]=MemberSetGet( member, &l_getValue!(StructType, member) );
-		}
+	foreach(i; AliasSeqIter!(setFieldMembers.length)){
+		enum member=setFieldMembers[i];
+		setters[i]=MemberSetGet( member, &l_setValue!(StructType, member) );
+	}
+
+	foreach(i; AliasSeqIter!(getFieldMembers.length)){
+		enum member=getFieldMembers[i];
+		getters[i]=MemberSetGet( member, &l_getValue!(StructType, member) );
 	}
 
 	
@@ -179,8 +195,6 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 	lua_pushcclosure(l, &l_indexHandler!StructType, 2);
 	lua_rawset(l, metatable);   //  metatable.__index = index_handler 
 	
-	
-	
 
 	// Add custom __newindex operator
 	lua_pushliteral(l, "__newindex");
@@ -197,16 +211,6 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 	lua_setglobal(l, luaStructName);
 
 }
-
-
-
-
-
-
-
-
-
-
 
 
 void assertInLua(bool ok, string err){
@@ -260,11 +264,11 @@ string getMetatableNameFromTypeName(string typeName){
 
 
 
+StructType* allocateObjInLua(StructType)(lua_State* l, StructType* data=null){
+	if(data is null){
+		data=cast(StructType*)(Mallocator.instance.allocate(StructType.sizeof).ptr);
+	}
 
-
-
-StructType* allocateObjInLua(StructType)(lua_State* l){
-	StructType* data= cast(StructType*)(Mallocator.instance.allocate(StructType.sizeof).ptr);
 	StructType** udata = cast(StructType **)lua_newuserdata(l, size_t.sizeof);
 	*udata = data;
 	string metaTableName=getMetatableName!StructType;
@@ -354,10 +358,17 @@ int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 
 	static if( isNumeric!Type){
 		__traits(getMember, *foo, valueName) = cast(Type)luaL_checknumber(l, -1);
-	}else{
+	}else static if( is(Type==char) ){
+		size_t strSize=0;
+		const char * str = luaL_checklstring(l, -1, &strSize);
+		assertInLua(strSize==1, "Bad lua char assigment");
+		__traits(getMember, *foo, valueName) = str[0];
+	}else static if( is(Type==struct) ){
 		enum string metaTableName=getMetatableName!Type;
 		Type* var = *cast(Type **)luaL_checkudata(l, -1, metaTableName);
 		__traits(getMember, *foo, valueName) = *var;
+	}else{
+		static assert(0, "Set value type not supported");
 	}
 
 	return 0;
@@ -366,8 +377,15 @@ int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 int l_getValue(StructType, string valueName)(lua_State* l, void* objPtr){
 	StructType* foo = cast(StructType *)objPtr;	
 
-	auto val=__traits(getMember, *foo, valueName);
-	pushReturnValue(l, val);
+	alias Type=typeof(__traits(getMember, StructType, valueName));
+	Type* val=&__traits(getMember, *foo, valueName);
+
+	static if( is(Type==struct) ){
+		pushReturnValue(l, val);
+	}else{
+		pushReturnValue(l, *val);
+
+	}
 
 	return 1;
 }
@@ -378,7 +396,6 @@ int l_callProcedure(StructType, string procedureName)(lua_State* l){
 	StructType* foo = *cast(StructType **)luaL_checkudata(l, 1, metaTableName.ptr);
 	return callProcedure!(StructType, procedureName)(foo, l, 2, argsNum);
 }
-
 
 
 int callProcedure(StructType, string procedureName)(StructType* var, lua_State* l, int argsStart, int argsNum){
@@ -487,12 +504,24 @@ bool isUserType(lua_State* l, int ud, const char* metaTableName){
 	return false;
 }
 
+void pushReturnValue(T)(lua_State* l, T val){
+	pushReturnValue(l, val);
+}
+
 void pushReturnValue(T)(lua_State* l, ref T val){
 	static if( isIntegral!T || isFloatingPoint!T ){
 		lua_pushnumber(l, val);
-	}else{
+	}else static if( is(T==char) ){
+		lua_pushlstring(l, &val, 1);
+	}else static if( is(T==struct) ){
 		T* data=allocateObjInLua!(T)(l);
 		emplace(data, val);
+	}else static if( isPointer!T ){
+		alias Type=typeof(*val);
+		allocateObjInLua!(Type)(l, val);
+		//static assert(0, "Pointer not supported");
+	}else{
+		static assert(0, "Return value not supported");
 	}
 }
 
@@ -515,20 +544,21 @@ auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart, int argsNu
 	return parms;
 }
 
-void setValueFromLuaStack(PARM)(lua_State* l, int valueStackNum, ref PARM value){
-	static if( isIntegral!PARM || isFloatingPoint!PARM ){
-		value=cast(PARM)luaL_checknumber(l, valueStackNum);
-	}else static if( is(PARM==string) ){
+void setValueFromLuaStack(T)(lua_State* l, int valueStackNum, ref T value){
+	static if( isIntegral!T || isFloatingPoint!T ){
+		value=cast(T)luaL_checknumber(l, valueStackNum);
+	}else static if( is(T==string) ){
 		size_t strLen=0;
 		const char* luaStr=luaL_checklstring(l, valueStackNum, &strLen);
 		value=(luaStr[0..strLen]).idup;
-	}else static if( is(PARM==struct) ){
-		enum metaTableName=getMetatableName!PARM;
-		PARM* m = *cast(PARM **)luaL_checkudata(l, valueStackNum, metaTableName.ptr);
+	}else static if( is(T==struct) ){
+		enum metaTableName=getMetatableName!T;
+		T* m = *cast(T **)luaL_checkudata(l, valueStackNum, metaTableName.ptr);
 		value=*m;
 	}else{
-		//pragma(msg, PARM);
-		luaWarning("Type not supported");
+		//pragma(msg, T);
+		//luaWarning("Type not supported");
+		static assert(0, "Type not supported");
 	}
 }
 
@@ -545,7 +575,7 @@ void setValueFromLuaStack(PARM)(lua_State* l, int valueStackNum, ref PARM value)
 struct Test{
 	int a=10;
 	char b='z';
-	float c=10.3;
+	const float c=10.3;
 	int d;
 
 	this(int ww){
@@ -594,7 +624,7 @@ struct Test{
 
 	~this(){
 		//writeln(a);
-		//writeln("aaaaaaaaaaaaaaaaa");
+		//writeln("dtor Test");
 	}
 }
 
@@ -609,8 +639,13 @@ struct TestBBB{
 		writeln(this);
 		return TestBBB(test.a, bb);
 	}
+
 	void print(){
 		writeln(this);
+	}
+
+	Test* getTestPointer(){
+		return &test;
 	}
 }
 
