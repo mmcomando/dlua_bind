@@ -7,8 +7,7 @@
 	"copyright": "Copyright © 2017, Michał Masiukiewicz",
 	"license": "MIT",
 	"dependencies": {
-		"lua-jit-d": "~>0.0.1",
-		"mutils": "*",
+		"lua-jit-d": "~>0.0.1"
 	},
 	"lflags-posix": ["-L."],
 	"libs": ["luajit" ],

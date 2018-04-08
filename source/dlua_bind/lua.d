@@ -12,7 +12,7 @@ import std.experimental.allocator.mallocator;
 
 import luajit.lua;
 
-import mutils.type_info;
+import dlua_bind.type_info;
 
 string luaExample=`
 local cl=TestClass.this(555);
