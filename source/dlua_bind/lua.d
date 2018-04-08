@@ -1,4 +1,4 @@
-﻿module lua;
+﻿module dlua_bind.lua;
 
 import core.atomic;
 
@@ -231,9 +231,8 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 	}
 	lua_pushvalue(l, methods);    // upvalue index 2
 	lua_pushcclosure(l, &l_indexHandler!StructType, 2);
-	lua_rawset(l, metatable);   //  metatable.__index = index_handler 
+	lua_rawset(l, metatable);   //  metatable.__index = l_indexHandler 
 	
-
 	// Add custom __newindex operator
 	lua_pushliteral(l, "__newindex");
 	lua_newtable(l);              // Table for members you can set    
@@ -244,12 +243,16 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 		lua_settable(l, -3);
 	}	
 	lua_pushcclosure(l, &l_newIndexHandler!StructType, 1);
-	lua_rawset(l, metatable);     // metatable.__newindex = newindex_handler 
-	
+	lua_rawset(l, metatable);     // metatable.__newindex = l_newIndexHandler 
+
+
+
 	lua_setglobal(l, luaStructName);
 
-	lua_pushcclosure(l, &l_createObj!(StructType), 0);
-	lua_setglobal(l, luaStructName);
+	lua_pop(l, 1);// Pop left value
+
+	//lua_pushcclosure(l, &l_createObj!(StructType), 0);
+	//lua_setglobal(l, luaStructName);
 	
 }
 
@@ -331,7 +334,6 @@ StructType allocateObjInLua(StructType)(lua_State* l, StructType data=null)
 	if( is(StructType==class) )
 {
 	if(data is null){
-		//data=new StructType();
 		data=Mallocator.instance.make!(StructType);
 	}
 	

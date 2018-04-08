@@ -1,6 +1,6 @@
 import std.stdio;
 
-import lua;
+import dlua_bind.lua;
 
 void main(){
 	initialize();
