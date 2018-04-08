@@ -14,7 +14,7 @@ import luajit.lua;
 
 import mutils.type_info;
 
-string luaExamplefgdsf=`
+string luaExample=`
 local cl=TestClass.this(555);
 cl:print();
 cl.a=123;
@@ -23,9 +23,13 @@ local cll=cl;
 
 cll.a=200;
 print(cl.a);
+cl:zeroClass(cl);
+print(cl.a);
+print(cll.a);
+
 `;
 
-string luaExample=`
+string luaExample5354=`
 local ss=hey.this(555)
 ss:printA()
 local w=ss:getTest(32);
@@ -105,7 +109,7 @@ void initialize(){
 	bindStruct!(Test, "hey")(gLuaState);
 	bindStruct!(TestBBB, "TestBBB")(gLuaState);
 	bindStruct!(TestCCC, "TestCCC")(gLuaState);
-	//bindStruct!(TestClass, "TestClass")(gLuaState);
+	bindStruct!(TestClass, "TestClass")(gLuaState);
 
 	luaL_loadstring(gLuaState, luaExample.ptr);
 	lua_pcall(gLuaState, 0, LUA_MULTRET, 0);	
@@ -315,8 +319,8 @@ StructType allocateObjInLua(StructType)(lua_State* l, StructType data=null)
 	if( is(StructType==class) )
 {
 	if(data is null){
-		data=new StructType();
-		//data=Mallocator.instance.make!(StructType);
+		//data=new StructType();
+		data=Mallocator.instance.make!(StructType);
 	}
 	
 	StructType* udata = cast(StructType *)lua_newuserdata(l, size_t.sizeof);
@@ -328,9 +332,13 @@ StructType allocateObjInLua(StructType)(lua_State* l, StructType data=null)
 	return data;
 }
 
-T* getObjFromUserData(T)(lua_State* l, int argNum){
+auto getObjFromUserData(T)(lua_State* l, int argNum){
 	enum metaTableName=getMetatableName!T;
-	T* var = *cast(T **)luaL_checkudata(l, argNum, metaTableName);
+	static if( is(T==class) ){
+		T var = *cast(T *)luaL_checkudata(l, argNum, metaTableName);
+	}else{
+		T* var = *cast(T **)luaL_checkudata(l, argNum, metaTableName);
+	}
 	return var;
 }
 
@@ -341,7 +349,11 @@ int createObj(StructType)(lua_State* l, int argsStart){
 	auto data=allocateObjInLua!(StructType)(l);
 	if(argsNum){
 		static if(hasMember!(StructType, "__ctor")){
-			callProcedure!(StructType, "__ctor")(*data, l, 1, argsNum);
+			static if( is(StructType==class) ){
+				callProcedure!(StructType, "__ctor")(data, l, 1, argsNum);
+			}else{
+				callProcedure!(StructType, "__ctor")(*data, l, 1, argsNum);
+			}
 		}else{
 			emplace(data);
 			foreach(i, ref field; (*data).tupleof){
@@ -375,8 +387,8 @@ int l_indexHandler(StructType)(lua_State* l){
 	MemberSetGet* m = cast(MemberSetGet*)lua_touserdata(l, -1);  // member info 
 	lua_pop(l, 1);     
 	luaL_checktype(l, 1, LUA_TUSERDATA);
-	StructType* var=getObjFromUserData!(StructType)(l, 1);
-	return m.func(l, var);
+	auto var=getObjFromUserData!(StructType)(l, 1);
+	return m.func(l, cast(void*)var);
 }
 
 int l_newIndexHandler(StructType)(lua_State *l){
@@ -390,8 +402,8 @@ int l_newIndexHandler(StructType)(lua_State *l){
 	lua_pop(l, 1);                               // drop lightuserdata 
 	luaL_checktype(l, 1, LUA_TUSERDATA);         // dup index 
 
-	StructType* var=getObjFromUserData!(StructType)(l, 1);
-	m.func(l, var);
+	auto var=getObjFromUserData!(StructType)(l, 1);
+	m.func(l, cast(void*)var);
 	return 0;
 }
 
@@ -400,26 +412,34 @@ int l_createObj(StructType)(lua_State* l){
 }
 
 int l_deleteObj(StructType)(lua_State* l){
-	StructType* var=getObjFromUserData!(StructType)(l, 1);
+	auto var=getObjFromUserData!(StructType)(l, 1);
 	Mallocator.instance.dispose(var);
 	return 0;	
 }
 
 int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
-	StructType* foo = cast(StructType *)objPtr;
-
 	alias Type=typeof( __traits(getMember, StructType, valueName) );
 
+	static if( is(StructType==class) ){
+		StructType foo = cast(StructType)objPtr;
+		Type* member=&__traits(getMember, foo, valueName);
+	}else{
+		StructType* foo = cast(StructType *)objPtr;
+		Type* member=&__traits(getMember, *foo, valueName);
+	}
+
+
+
 	static if( isNumeric!Type){
-		__traits(getMember, *foo, valueName) = cast(Type)luaL_checknumber(l, -1);
+		*member = cast(Type)luaL_checknumber(l, -1);
 	}else static if( is(Type==char) ){
 		size_t strSize=0;
 		const char * str = luaL_checklstring(l, -1, &strSize);
 		assertInLua(strSize==1, "Bad lua char assigment");
-		__traits(getMember, *foo, valueName) = str[0];
+		*member = str[0];
 	}else static if( is(Type==struct) ){
 		Type* var=getObjFromUserData!(Type)(l, -1);
-		__traits(getMember, *foo, valueName) = *var;
+		*member = *var;
 	}else{
 		static assert(0, "Set value type not supported");
 	}
@@ -428,10 +448,18 @@ int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 }
 
 int l_getValue(StructType, string valueName)(lua_State* l, void* objPtr){
-	StructType* foo = cast(StructType *)objPtr;	
-
 	alias Type=typeof(__traits(getMember, StructType, valueName));
-	Type* val=&__traits(getMember, *foo, valueName);
+
+	static if( is(StructType==class) ){
+		StructType foo = cast(StructType)objPtr;
+		Type* val=&__traits(getMember, foo, valueName);
+	}else{
+		StructType* foo = cast(StructType *)objPtr;
+		Type* val=&__traits(getMember, *foo, valueName);
+	}
+
+	//StructType* foo = cast(StructType *)objPtr;	
+
 
 	static if( is(Type==struct) ){
 		pushReturnValue(l, val);
@@ -445,8 +473,12 @@ int l_getValue(StructType, string valueName)(lua_State* l, void* objPtr){
 
 int l_callProcedure(StructType, string procedureName)(lua_State* l){
 	int argsNum=lua_gettop(l)-1;
-	StructType* var=getObjFromUserData!(StructType)(l, 1);
-	return callProcedure!(StructType, procedureName)(*var, l, 2, argsNum);
+	auto var=getObjFromUserData!(StructType)(l, 1);
+	static if( is(StructType==class) ){
+		return callProcedure!(StructType, procedureName)(var, l, 2, argsNum);
+	}else{
+		return callProcedure!(StructType, procedureName)(*var, l, 2, argsNum);
+	}
 }
 
 
@@ -613,8 +645,8 @@ void setValueFromLuaStack(T)(lua_State* l, int valueStackNum, ref T value){
 		T* var=getObjFromUserData!(T)(l, valueStackNum);
 		value=*var;
 	}else static if( is(T==class) ){
-		T* var=getObjFromUserData!(T)(l, valueStackNum);
-		value=*var;
+		T var=getObjFromUserData!(T)(l, valueStackNum);
+		value=var;
 	}else{
 		pragma(msg, T);
 		//luaWarning("Type not supported");
@@ -722,6 +754,10 @@ class TestClass{
 
 	void print(){
 		writeln("TestClass:", a);
+	}
+
+	void zeroClass(TestClass cl){
+		cl.a=0;
 	}
 }
 
