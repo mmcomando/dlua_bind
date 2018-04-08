@@ -1,7 +1,7 @@
 import std.stdio;
 
-import dlua_bind.lua;
+import dlua_bind.test;
 
 void main(){
-	initialize();
+	testLua();
 }
