@@ -27,6 +27,7 @@ cl:zeroClass(cl);
 print(cl.a);
 print(cll.a);
 
+print(fff(111, 200000));
 `;
 
 string luaExample5354=`
@@ -110,6 +111,8 @@ void initialize(){
 	bindStruct!(TestBBB, "TestBBB")(gLuaState);
 	bindStruct!(TestCCC, "TestCCC")(gLuaState);
 	bindStruct!(TestClass, "TestClass")(gLuaState);
+
+	bindFunction!(add, "fff")(gLuaState);
 
 	luaL_loadstring(gLuaState, luaExample.ptr);
 	lua_pcall(gLuaState, 0, LUA_MULTRET, 0);	
@@ -245,6 +248,15 @@ void bindStruct(StructType, string luaStructName)(lua_State* l){
 	
 	lua_setglobal(l, luaStructName);
 
+	lua_pushcclosure(l, &l_createObj!(StructType), 0);
+	lua_setglobal(l, luaStructName);
+	
+}
+
+void bindFunction(alias FUN, string name)(lua_State* l){
+	static assert( is(typeof(FUN)==function), "This function can bind only functions");
+	lua_pushcclosure(l, &l_callProcedureGlobal!(__traits(parent, FUN), __traits(identifier, FUN)), 0);
+	lua_setglobal(l, name);
 }
 
 
@@ -345,7 +357,6 @@ auto getObjFromUserData(T)(lua_State* l, int argNum){
 int createObj(StructType)(lua_State* l, int argsStart){
 	int argsNum=lua_gettop(l)-argsStart+1;
 
-	//StructType* data=allocateObjInLua!(StructType)(l);
 	auto data=allocateObjInLua!(StructType)(l);
 	if(argsNum){
 		static if(hasMember!(StructType, "__ctor")){
@@ -365,9 +376,9 @@ int createObj(StructType)(lua_State* l, int argsStart){
 		}
 		
 	}else{
-		//*data=StructType.init;
 		emplace(data);
 	}
+
 	return 1;	
 }
 
@@ -428,7 +439,7 @@ int l_setValue(StructType, string valueName)(lua_State* l, void* objPtr){
 		Type* member=&__traits(getMember, *foo, valueName);
 	}
 
-
+	
 
 	static if( isNumeric!Type){
 		*member = cast(Type)luaL_checknumber(l, -1);
@@ -458,9 +469,6 @@ int l_getValue(StructType, string valueName)(lua_State* l, void* objPtr){
 		Type* val=&__traits(getMember, *foo, valueName);
 	}
 
-	//StructType* foo = cast(StructType *)objPtr;	
-
-
 	static if( is(Type==struct) ){
 		pushReturnValue(l, val);
 	}else{
@@ -469,6 +477,11 @@ int l_getValue(StructType, string valueName)(lua_State* l, void* objPtr){
 	}
 
 	return 1;
+}
+
+int callProcedure(StructType, string procedureName)(ref StructType varOrModule, lua_State* l, int argsStart, int argsNum){
+	mixin callProcedureTemplate;
+	return callProcedureImpl();
 }
 
 int l_callProcedure(StructType, string procedureName)(lua_State* l){
@@ -481,56 +494,68 @@ int l_callProcedure(StructType, string procedureName)(lua_State* l){
 	}
 }
 
-
-int callProcedure(StructType, string procedureName)(ref StructType var, lua_State* l, int argsStart, int argsNum){
-	alias overloads= typeof(__traits(getOverloads, var, procedureName));
-	int overloadNummm=chooseFunctionOverload!(getProcedureData!(StructType, procedureName))(l, argsStart, argsNum);
-	if(overloadNummm==-1){
-		return 0;
-	}
+int l_callProcedureGlobal(alias varOrModule, string procedureName)(lua_State* l){
+	int argsStart=1;
+	int argsNum=lua_gettop(l);
 	
-	int returnValuesNum=0;
-sw:switch(overloadNummm){
-		foreach(overloadNum, overload; overloads){
-			case overloadNum:
+	mixin callProcedureTemplate;
+	
+	return callProcedureImpl();	
+}
 
-			alias FUN=overloads[overloadNum];
-			alias ParmsDefault=ParameterDefaults!(__traits(getOverloads, StructType, procedureName)[overloadNum]);		
-			alias Parms=Parameters!FUN;
-			
-			enum bool hasReturn= !is(ReturnType!FUN==void);
-			enum bool hasParms=Parms.length>0;
-
-			static assert(Parms.length<16);// Lua stack has minimum 16 slots
-
-			returnValuesNum=hasReturn;
-
-			static if(hasParms){
-				auto parms=getParmsTuple!(FUN, ParmsDefault)(l, argsStart, argsNum);
-			}else{
-				auto parms=tuple!();
-			}
-
-			static if(hasReturn){
-				auto ret=__traits(getOverloads, var, procedureName)[overloadNum](parms.expand);
-				static if(procedureName=="__ctor"){
-					emplace(&var, ret);// For some reason __ctor returns value and does not modify 'var' object
-				}else{
-					pushReturnValue(l, ret);
-				}
-			}else{
-				__traits(getOverloads, var, procedureName)[overloadNum](parms.expand);
-			}
-
-			break sw;
+mixin template callProcedureTemplate(){
+	int callProcedureImpl(){
+		alias overloads= typeof(__traits(getOverloads, varOrModule, procedureName));
+		int overloadNummm=chooseFunctionOverload!(getProcedureData!(varOrModule, procedureName))(l, argsStart, argsNum);
+		if(overloadNummm==-1){
+			return 0;
 		}
-
-		default:
-			assert(1, "No overload with that number");
+		
+		int returnValuesNum=0;
+	sw:switch(overloadNummm){
+			foreach(overloadNum, overload; overloads){
+				case overloadNum:
+				
+				alias FUN=overloads[overloadNum];
+				alias ParmsDefault=ParameterDefaults!(__traits(getOverloads, varOrModule, procedureName)[overloadNum]);		
+				alias Parms=Parameters!FUN;
+				
+				enum bool hasReturn= !is(ReturnType!FUN==void);
+				enum bool hasParms=Parms.length>0;
+				
+				static assert(Parms.length<16);// Lua stack has minimum 16 slots
+				
+				returnValuesNum=hasReturn;
+				
+				static if(hasParms){
+					auto parms=getParmsTuple!(FUN, ParmsDefault)(l, argsStart, argsNum);
+				}else{
+					auto parms=tuple!();
+				}
+				
+				static if(hasReturn){
+					auto ret=__traits(getOverloads, varOrModule, procedureName)[overloadNum](parms.expand);
+					static if(procedureName=="__ctor"){
+						emplace(&varOrModule, ret);// For some reason __ctor returns value and does not modify 'var' object
+					}else{
+						pushReturnValue(l, ret);
+					}
+				}else{
+					__traits(getOverloads, varOrModule, procedureName)[overloadNum](parms.expand);
+				}
+				
+				break sw;
+			}
+			
+			default:
+				assert(1, "No overload with that number");
+		}
+		
+		return returnValuesNum;
 	}
 
-	return returnValuesNum;
 }
+
 
 
 int chooseFunctionOverload(ProcedureData procedureData)(lua_State* l, int argsStart, int argsNum){	
@@ -575,13 +600,13 @@ OVERLOADS:foreach(int i, OverloadData overload; procedureData.overloads){
 
 bool isUserType(lua_State* l, int ud, const char* metaTableName){
 	void *p = lua_touserdata(l, ud);
-	if (p == null) {  /* value is not a userdata? */
+	if (p == null) {  // value is not a userdata? 
 		return false;
 	}
-	if (lua_getmetatable(l, ud)) {  /* does it have a metatable? */
-		lua_getfield(l, LUA_REGISTRYINDEX, metaTableName);  /* get correct metatable */
-		if (lua_rawequal(l, -1, -2)) {  /* does it have the correct mt? */
-			lua_pop(l, 2);  /* remove both metatables */
+	if (lua_getmetatable(l, ud)) {  // does it have a metatable? 
+		lua_getfield(l, LUA_REGISTRYINDEX, metaTableName);  // get correct metatable 
+		if (lua_rawequal(l, -1, -2)) {  // does it have the correct mt? 
+			lua_pop(l, 2);  // remove both metatables 
 			return true;
 		}
 	}
@@ -609,7 +634,6 @@ void pushReturnValue(T)(lua_State* l, ref T val){
 		allocateObjInLua!(Type)(l, val);
 	}else static if( is(T==class) ){
 		allocateObjInLua!(T)(l, val);
-		//static assert(0, "Pointer not supported");
 	}else{
 		static assert(0, "Return value not supported");
 	}
@@ -766,41 +790,26 @@ int add(int a, int b){
 }
 
 
-
-
-
-
-
-
-
-
-void bindFunction(alias FUN, string name)(){
-	lua_pushcclosure(gLuaState, &createLuaBindFunction!(FUN), 0);
-	lua_setglobal(gLuaState, name);
+int testFunc(){
+	writeln("!00000000000000");
+	return 0;
 }
 
-int createLuaBindFunction(alias FUN)(lua_State* l){
-	enum bool hasReturn= !is(ReturnType!FUN==void);
-	alias Parms=Parameters!FUN;
-	static assert(Parms.length<=16);// Lua stack has minimum 16 slots
-	
-	assert(lua_gettop(l)==Parms.length);
-	Tuple!(Parms) parms;
-	foreach(i, PARM; Parms){
-		static if( isIntegral!PARM || isFloatingPoint!PARM ){
-			parms[i]=cast(PARM)luaL_checknumber(l, i+1);
-		}else{
-			static assert(0, "Type not supported");
-		}
-	}
-	
-	static if(hasReturn){
-		auto ret=FUN(parms.expand);
-		pushReturnValue(l, ret);
-	}else{
-		FUN(parms.expand);
-	}
-	return 1;
-	
+int testFunc(int a){
+	writeln("!1111111111111111111");
+	return a;
 }
+
+int testFunc(int a, int b){
+	writeln("!22222222222");
+	return a*b;
+}
+
+
+
+
+
+
+
+
 
