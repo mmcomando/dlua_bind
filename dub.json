@@ -1,11 +1,11 @@
 {
-	"name": "test",
+	"name": "dlua_bind",
 	"authors": [
-		"pc"
+		"Michał Masiukiewicz"
 	],
-	"description": "A minimal D application.",
-	"copyright": "Copyright © 2017, pc",
-	"license": "proprietary",
+	"description": "Library to bind Lua with D",
+	"copyright": "Copyright © 2017, Michał Masiukiewicz",
+	"license": "MIT",
 	"dependencies": {
 		"lua-jit-d": "~>0.0.1",
 		"mutils": "*",
