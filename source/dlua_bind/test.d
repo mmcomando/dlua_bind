@@ -4,8 +4,7 @@ import std.stdio;
 
 import luajit.lua;
 
-import dlua_bind.bind;
-import dlua_bind.lua;
+import dlua_bind;
 
 string luaExample=`
 function myAssert (a, b)
@@ -15,7 +14,9 @@ function myAssert (a, b)
       error("Assert failure error")
  end
 end
-
+function luaAdd (a, b)
+  return a+b
+end
 
 --------------------------------
 -- Structs
@@ -94,17 +95,18 @@ cl:zeroClass(cl);             --Check class assigment
 myAssert(cll.a, 0);
 myAssert(cl.a, 0);
 
-myAssert(fff(111, 200000), 200111);      --Check global function call
+myAssert(add(111, 200000), 200111);      --Check global function call
 
 print();
 print(" --- Lua test end --- ");
+
+
 `;
 
 
 
 void testLua(){
-	lua_State* l;
-	l = luaL_newstate();
+	lua_State* l=luaL_newstate();
 	luaL_openlibs(l);
 	
 	bindObj!(Test, "Test")(l);
@@ -112,15 +114,21 @@ void testLua(){
 	bindObj!(TestCCC, "TestCCC")(l);
 	bindObj!(TestClass, "TestClass")(l);
 	
-	bindFunction!(add, "fff")(l);
-	
+	bindFunction!(add, "add")(l);
+
+
+
 	luaL_loadstring(l, luaExample.ptr);
 	int returnCode=lua_pcall(l, 0, LUA_MULTRET, 0);	
 	assert(returnCode==0, "Lua script error");
 
-	callLuaFunc!(void function(int a, int b), "myAssert")(l, 2, 2);	
+	callLuaFunc!(int function(int a, int b), "luaAdd")(l, 2, 2);
+	auto luaAdd=getLuaFunctionCaller!(int function(int a, int b), "luaAdd")(l);
+	assert(luaAdd(2, 2)==4);
+
+	/*callLuaFunc!(void function(int a, int b), "myAssert")(l, 2, 2);	
 	auto myAssert=getLuaFunctionCaller!(int function(int a, int b), "myAssert")(l);
-	assert(myAssert(2, 2)==0);// myAssert in lua does not have return value, but in bindings we return ReturnType.init
+	assert(myAssert(2, 2)==0);// myAssert in lua does not have return value, but in bindings we return ReturnType.init*/
 }
 
 

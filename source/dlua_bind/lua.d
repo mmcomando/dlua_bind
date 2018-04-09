@@ -39,7 +39,7 @@ struct LuaCallFunc(Func, string name){
 		}
 
 		// Do the call 
-		int ok=lua_pcall(l, args.length, 0, 0);
+		int ok=lua_pcall(l, args.length, hasReturn, 0);
 		if(ok!=0){
 			writeln("Error calling lua function");
 			static if(hasReturn){
@@ -49,6 +49,7 @@ struct LuaCallFunc(Func, string name){
 		static if(hasReturn){
 			ReturnType!Func returnValue;
 			setValueFromLuaStack(l, -1, returnValue);
+			lua_pop(l, 1);
 			return returnValue;
 		} 
 	}
@@ -262,16 +263,17 @@ int l_callFunctionGlobal(alias varOrModule, string functionName)(lua_State* l){
 	return callFunctionImpl();	
 }
 
+// mixin template is used to use the same implementation in l_callFunction and l_callFunctionGlobal functions
 mixin template callFunctionTemplate(){
 	int callFunctionImpl(){
 		alias overloads= typeof(__traits(getOverloads, varOrModule, functionName));
-		int overloadNummm=chooseFunctionOverload!(getFunctionData!(varOrModule, functionName))(l, argsStart, argsNum);
-		if(overloadNummm==-1){
+		int overloadToCall=chooseFunctionOverload!(getFunctionData!(varOrModule, functionName))(l, argsStart, argsNum);
+		if(overloadToCall==-1){
 			return 0;
 		}
 		
 		int returnValuesNum=0;
-	sw:switch(overloadNummm){
+	sw:switch(overloadToCall){
 			foreach(overloadNum, overload; overloads){
 				case overloadNum:
 				
