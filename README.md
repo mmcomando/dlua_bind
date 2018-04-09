@@ -21,7 +21,7 @@ print(s.a)
 ```
 
 Calling Lua function in D
-```Lua
+```D
 // Direct Call
 callLuaFunc!(int function(int a, int b), "luaAdd")(l, 2, 2);
 
