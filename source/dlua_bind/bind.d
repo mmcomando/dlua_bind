@@ -75,7 +75,7 @@ void bindObj(T, string luaStructName)(lua_State* l){
 	
 	foreach(i; AliasSeqIter!(functionMembers.length)){
 		enum member=functionMembers[i];
-		functions[i]=luaL_Reg( (member~"\0").ptr, &l_callProcedure!(T, member));
+		functions[i]=luaL_Reg( (member~"\0").ptr, &l_callFunction!(T, member));
 	}
 	
 	foreach(i; AliasSeqIter!(setFieldMembers.length)){
@@ -140,6 +140,6 @@ void bindObj(T, string luaStructName)(lua_State* l){
 
 void bindFunction(alias FUN, string name)(lua_State* l){
 	static assert( is(typeof(FUN)==function), "This function can bind only functions");
-	lua_pushcclosure(l, &l_callProcedureGlobal!(__traits(parent, FUN), __traits(identifier, FUN)), 0);
+	lua_pushcclosure(l, &l_callFunctionGlobal!(__traits(parent, FUN), __traits(identifier, FUN)), 0);
 	lua_setglobal(l, name);
 }

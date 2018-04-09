@@ -120,9 +120,9 @@ int createObj(T)(lua_State* l, int argsStart){
 	if(argsNum){
 		static if(hasMember!(T, "__ctor")){
 			static if( is(T==class) ){
-				callProcedure!(T, "__ctor")(data, l, 1, argsNum);
+				callFunction!(T, "__ctor")(data, l, 1, argsNum);
 			}else{
-				callProcedure!(T, "__ctor")(*data, l, 1, argsNum);
+				callFunction!(T, "__ctor")(*data, l, 1, argsNum);
 			}
 		}else{
 			emplace(data);
@@ -238,34 +238,34 @@ int l_getValue(T, string valueName)(lua_State* l, void* objPtr){
 	return 1;
 }
 
-int callProcedure(T, string procedureName)(ref T varOrModule, lua_State* l, int argsStart, int argsNum){
-	mixin callProcedureTemplate;
-	return callProcedureImpl();
+int callFunction(T, string functionName)(ref T varOrModule, lua_State* l, int argsStart, int argsNum){
+	mixin callFunctionTemplate;
+	return callFunctionImpl();
 }
 
-int l_callProcedure(T, string procedureName)(lua_State* l){
+int l_callFunction(T, string functionName)(lua_State* l){
 	int argsNum=lua_gettop(l)-1;
 	auto var=getObjFromUserData!(T)(l, 1);
 	static if( is(T==class) ){
-		return callProcedure!(T, procedureName)(var, l, 2, argsNum);
+		return callFunction!(T, functionName)(var, l, 2, argsNum);
 	}else{
-		return callProcedure!(T, procedureName)(*var, l, 2, argsNum);
+		return callFunction!(T, functionName)(*var, l, 2, argsNum);
 	}
 }
 
-int l_callProcedureGlobal(alias varOrModule, string procedureName)(lua_State* l){
+int l_callFunctionGlobal(alias varOrModule, string functionName)(lua_State* l){
 	int argsStart=1;
 	int argsNum=lua_gettop(l);
 	
-	mixin callProcedureTemplate;
+	mixin callFunctionTemplate;
 	
-	return callProcedureImpl();	
+	return callFunctionImpl();	
 }
 
-mixin template callProcedureTemplate(){
-	int callProcedureImpl(){
-		alias overloads= typeof(__traits(getOverloads, varOrModule, procedureName));
-		int overloadNummm=chooseFunctionOverload!(getProcedureData!(varOrModule, procedureName))(l, argsStart, argsNum);
+mixin template callFunctionTemplate(){
+	int callFunctionImpl(){
+		alias overloads= typeof(__traits(getOverloads, varOrModule, functionName));
+		int overloadNummm=chooseFunctionOverload!(getFunctionData!(varOrModule, functionName))(l, argsStart, argsNum);
 		if(overloadNummm==-1){
 			return 0;
 		}
@@ -276,7 +276,7 @@ mixin template callProcedureTemplate(){
 				case overloadNum:
 				
 				alias FUN=overloads[overloadNum];
-				alias ParmsDefault=ParameterDefaults!(__traits(getOverloads, varOrModule, procedureName)[overloadNum]);		
+				alias ParmsDefault=ParameterDefaults!(__traits(getOverloads, varOrModule, functionName)[overloadNum]);		
 				alias Parms=Parameters!FUN;
 				
 				enum bool hasReturn= !is(ReturnType!FUN==void);
@@ -293,14 +293,14 @@ mixin template callProcedureTemplate(){
 				}
 				
 				static if(hasReturn){
-					auto ret=__traits(getOverloads, varOrModule, procedureName)[overloadNum](parms.expand);
-					static if(procedureName=="__ctor"){
+					auto ret=__traits(getOverloads, varOrModule, functionName)[overloadNum](parms.expand);
+					static if(functionName=="__ctor"){
 						emplace(&varOrModule, ret);// For some reason __ctor returns value and does not modify 'var' object
 					}else{
 						pushReturnValue(l, ret);
 					}
 				}else{
-					__traits(getOverloads, varOrModule, procedureName)[overloadNum](parms.expand);
+					__traits(getOverloads, varOrModule, functionName)[overloadNum](parms.expand);
 				}
 				
 				break sw;

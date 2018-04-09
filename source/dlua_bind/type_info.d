@@ -91,7 +91,7 @@ struct OverloadData{
 	}
 }
 
-struct ProcedureData{
+struct FunctionData{
 	string name;
 	OverloadData[] overloads;
 	
@@ -103,16 +103,16 @@ struct ProcedureData{
 }
 
 // To generate data for normal function give module in place of StructType
-ProcedureData getProcedureData(alias StructType, string procedureName)(){
-	ProcedureData procedureData;
-	procedureData.name=procedureName;
-	alias overloads= typeof(__traits(getOverloads, StructType, procedureName));
+FunctionData getFunctionData(alias StructType, string functionName)(){
+	FunctionData procedureData;
+	procedureData.name=functionName;
+	alias overloads= typeof(__traits(getOverloads, StructType, functionName));
 	foreach(overloadNum, overload; overloads){
 		OverloadData overloadData;
 		
 		alias FUN=overloads[overloadNum];
 		alias Parms=Parameters!FUN;		
-		alias ParmsDefault=ParameterDefaults!(__traits(getOverloads, StructType, procedureName)[overloadNum]);		
+		alias ParmsDefault=ParameterDefaults!(__traits(getOverloads, StructType, functionName)[overloadNum]);		
 		enum bool hasReturn= !is(ReturnType!FUN==void);
 		enum bool hasParms=Parms.length>0;
 		
@@ -147,7 +147,7 @@ unittest{
 		int proc(int a, string b, double c ){return 0;}
 	}
 	// Data for procedure
-	enum ProcedureData procedureDataA=getProcedureData!(Test, "procA");
+	enum FunctionData procedureDataA=getFunctionData!(Test, "procA");
 	static assert(procedureDataA.overloads.length==2);
 	static assert(procedureDataA.overloads[0].parameters.length==4);
 	static assert(procedureDataA.overloads[1].parameters.length==3);
@@ -158,7 +158,7 @@ unittest{
 	static assert(procedureDataA.overloads[0].parameters[0].typeData.name=="int");
 	
 	// Data for function
-	enum ProcedureData funcData=getProcedureData!(mutils.type_info, "func");
+	enum FunctionData funcData=getFunctionData!(mutils.type_info, "func");
 	static assert(funcData.overloads.length==7);
 	static assert(funcData.overloads[0].parameters.length==0);
 	static assert(funcData.overloads[1].parameters.length==1);

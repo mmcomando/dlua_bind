@@ -63,7 +63,7 @@ string getMetatableNameFromTypeName(string typeName){
 }
 
 
-int chooseFunctionOverload(ProcedureData procedureData)(lua_State* l, int argsStart, int argsNum){	
+int chooseFunctionOverload(FunctionData procedureData)(lua_State* l, int argsStart, int argsNum){	
 	bool noChoice= (procedureData.overloads.length==1);
 	if(noChoice){
 		return 0;
