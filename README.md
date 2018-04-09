@@ -6,6 +6,8 @@ This library is in early stages of development thus bugs might be common.
 # Example
 Binding code in D
 ```D
+import dlua_bind.bind;
+
 bindObj!(TestStruct, "TestStruct")(l);
 bindFunction!(add, "add")(l);
 
