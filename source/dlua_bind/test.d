@@ -107,10 +107,10 @@ void testLua(){
 	l = luaL_newstate();
 	luaL_openlibs(l);
 	
-	bindStruct!(Test, "Test")(l);
-	bindStruct!(TestBBB, "TestBBB")(l);
-	bindStruct!(TestCCC, "TestCCC")(l);
-	bindStruct!(TestClass, "TestClass")(l);
+	bindObj!(Test, "Test")(l);
+	bindObj!(TestBBB, "TestBBB")(l);
+	bindObj!(TestCCC, "TestCCC")(l);
+	bindObj!(TestClass, "TestClass")(l);
 	
 	bindFunction!(add, "fff")(l);
 	
