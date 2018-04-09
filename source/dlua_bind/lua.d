@@ -25,7 +25,51 @@ import dlua_bind.utils;
  lua_pcall(gLuaState, 0, LUA_MULTRET, 0);	
  }*/
 
+struct LuaCallFunc(Func, string name){
+	static assert( isFunctionPointer!Func );
 
+	lua_State* l;
+
+	auto opCall(Parameters!Func args) {
+		enum bool hasReturn= !is(ReturnType!Func==void);
+
+		lua_getglobal(l, name);  
+		foreach(ref arg; args){
+			pushReturnValue(l, arg);// Push  argument 
+		}
+
+		// Do the call 
+		int ok=lua_pcall(l, args.length, 0, 0);
+		if(ok!=0){
+			writeln("Error calling lua function");
+			static if(hasReturn){
+				return (ReturnType!Func).init;// Return default value
+			}
+		}
+		static if(hasReturn){
+			ReturnType!Func returnValue;
+			setValueFromLuaStack(l, -1, returnValue);
+			return returnValue;
+		} 
+	}
+
+}
+
+auto getLuaFunctionCaller(Func, string name)(lua_State* l){
+	LuaCallFunc!(Func, name) caller;
+	caller.l=l;
+	return caller;
+}
+
+auto callLuaFunc(Func, string name, Args...)(lua_State* l, auto ref Args args){
+	static assert( isFunctionPointer!Func );
+	static assert( (Parameters!Func).length==Args.length );
+
+	enum bool hasReturn= !is(ReturnType!Func==void);
+	auto myAssert=getLuaFunctionCaller!(Func, name)(l);
+
+	return myAssert(args);
+}
 
 StructType* allocateObjInLua(StructType)(lua_State* l, StructType* data=null)
 	if( is(StructType==struct) )
@@ -320,6 +364,10 @@ auto getParmsTuple(FUN, ParmsDefault...)(lua_State* l, int argsStart, int argsNu
 }
 
 void setValueFromLuaStack(T)(lua_State* l, int valueStackNum, ref T value){
+	int type=lua_type(l, valueStackNum);
+	if(type==LUA_TNIL){
+		return;
+	}
 	static if( isIntegral!T || isFloatingPoint!T ){
 		value=cast(T)luaL_checknumber(l, valueStackNum);
 	}else static if( is(T==string) ){

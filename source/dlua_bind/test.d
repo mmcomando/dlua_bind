@@ -5,6 +5,7 @@ import std.stdio;
 import luajit.lua;
 
 import dlua_bind.bind;
+import dlua_bind.lua;
 
 string luaExample=`
 function myAssert (a, b)
@@ -114,7 +115,12 @@ void testLua(){
 	bindFunction!(add, "fff")(l);
 	
 	luaL_loadstring(l, luaExample.ptr);
-	lua_pcall(l, 0, LUA_MULTRET, 0);	
+	int returnCode=lua_pcall(l, 0, LUA_MULTRET, 0);	
+	assert(returnCode==0, "Lua script error");
+
+	callLuaFunc!(void function(int a, int b), "myAssert")(l, 2, 2);	
+	auto myAssert=getLuaFunctionCaller!(int function(int a, int b), "myAssert")(l);
+	assert(myAssert(2, 2)==0);// myAssert in lua does not have return value, but in bindings we return ReturnType.init
 }
 
 
